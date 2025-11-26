@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use App\Services\ShiftAlgorithmsService;
+use Carbon\Carbon;
 
 class CalendarController extends Controller
 {
@@ -38,7 +39,7 @@ class CalendarController extends Controller
         $roles = Role::all();
         $users = User::where('id', '!=', 1)->get();
 
-        $shift = $request->has('id') ? Shift::find($request->id) : null;
+        $shift = $request->id ? Shift::find($request->id) : null;
         $date = $shift ? $shift->date : $request->date;
 
         return view('calendar.create', compact('date', 'locations', 'roles', 'users', 'shift'));
@@ -46,9 +47,12 @@ class CalendarController extends Controller
 
     public function events(Request $request)
     {
+        $allShifts = Shift::with(['location', 'user'])->get();
+
         $shifts = $this->algo->searchShifts(
-            locationName: $request->location ?? null,
-            userName:     $request->user ?? null
+            allShifts: $allShifts,
+            locationName: $request->location,
+            userName: $request->user
         );
 
         $events = collect($shifts)->map(function ($shift) {
@@ -88,11 +92,20 @@ class CalendarController extends Controller
         $shiftId = $request->id;
 
         if ($request->user_id) {
+            $user = User::find($request->user_id);
+
+            $weekStart = Carbon::parse($request->date)->startOfWeek();
+            $weekEnd = Carbon::parse($request->date)->endOfWeek();
+
+            $existingShifts = Shift::where('user_id', $user->id)
+                ->whereBetween('date', [$weekStart, $weekEnd])
+                ->where('id', '!=', $shiftId)
+                ->get();
+
             $check = $this->algo->greedyWeeklyLimit(
-                userId: $request->user_id,
-                date: $request->date,
-                newDuration: $request->duration,
-                ignoreShiftId: $shiftId
+                user: $user,
+                existingShifts: $existingShifts,
+                newShiftDuration: $request->duration
             );
 
             if ($check['exceeds']) {
@@ -105,12 +118,15 @@ class CalendarController extends Controller
             }
         }
 
+        $locationShifts = Shift::where('location_id', $request->location_id)
+            ->where('date', $request->date)
+            ->where('id', '!=', $shiftId)
+            ->get();
+
         $overlap = $this->algo->intervalOverlap(
-            locationId: $request->location_id,
-            date: $request->date,
+            existingShifts: $locationShifts,
             from: $request->from,
-            to: $request->to,
-            ignoreShiftId: $shiftId
+            to: $request->to
         );
 
         if ($overlap) {
@@ -121,6 +137,7 @@ class CalendarController extends Controller
         }
 
         DB::beginTransaction();
+
         try {
             $data = [
                 'location_id' => $request->location_id,
@@ -155,7 +172,6 @@ class CalendarController extends Controller
         }
     }
 
-
     public function destroy(Shift $shift)
     {
         $shift->delete();
@@ -164,14 +180,20 @@ class CalendarController extends Controller
 
     public function assignAllOpenShifts(Request $request)
     {
-        $assignedShifts = $this->algo->hungarianAssignAllOpenShifts();
+        $openShifts = Shift::whereNull('user_id')->get();
+        $users = User::where('id', '!=', 1)->get();
+        $allShifts = Shift::with('location')->get();
+
+        $assigned = $this->algo->hungarianAssignAllOpenShifts(
+            openShifts: $openShifts,
+            users: $users,
+            allShifts: $allShifts
+        );
 
         return response()->json([
             'success' => true,
-            'assignedShifts' => $assignedShifts,
-            'message' => count($assignedShifts) . ' open shifts assigned successfully.'
+            'assignedShifts' => $assigned,
+            'message' => count($assigned) . ' open shifts assigned successfully.'
         ]);
     }
-
-
 }

@@ -2,182 +2,172 @@
 
 namespace App\Services;
 
-use App\Models\Shift;
-use App\Models\User;
 use Carbon\Carbon;
 
 class ShiftAlgorithmsService
 {
-    /**
-     * ───────────────────────────────────────────────
-     * GREEDY WEEKLY HOURS ALGORITHM
-     * Checks if adding a shift exceeds user's weekly limit
-     * ───────────────────────────────────────────────
-     */
-    public function greedyWeeklyLimit($userId, $date, $newDuration, $ignoreShiftId = null)
+    public function greedyWeeklyLimit($user, $existingShifts, $newShiftDuration)
     {
-        $weekStart = Carbon::parse($date)->startOfWeek();
-        $weekEnd   = Carbon::parse($date)->endOfWeek();
-
-        $shifts = Shift::where('user_id', $userId)
-            ->whereBetween('date', [$weekStart, $weekEnd])
-            ->get();
-
         $total = 0;
-        foreach ($shifts as $shift) {
-            if ($ignoreShiftId && $shift->id == $ignoreShiftId) continue;
+
+        foreach ($existingShifts as $shift) {
             $total += $shift->duration;
         }
-        $total += $newDuration;
 
-        $allowed = User::find($userId)->weekly_hours_limit ?? 0;
+        $total += $newShiftDuration;
+
+        $allowed = $user->weekly_hours_limit ?? 0;
 
         return [
-            'allowed' => $allowed,
+            'allowed'  => $allowed,
             'required' => $total,
-            'exceeds' => $total > $allowed
+            'exceeds'  => $total > $allowed
         ];
     }
 
-    /**
-     * ───────────────────────────────────────────────
-     * INTERVAL OVERLAP CHECK
-     * Checks if a shift overlaps with other shifts at same location
-     * ───────────────────────────────────────────────
-     */
-    public function intervalOverlap($locationId, $date, $from, $to, $ignoreShiftId = null)
+    public function intervalOverlap($existingShifts, $from, $to)
     {
-        $shifts = Shift::where('location_id', $locationId)
-            ->where('date', $date)
-            ->get();
-
-        foreach ($shifts as $shift) {
-            if ($ignoreShiftId && $shift->id == $ignoreShiftId) continue;
-            if ($shift->from < $to && $from < $shift->to) return true;
+        foreach ($existingShifts as $shift) {
+            if ($shift->from < $to && $from < $shift->to) {
+                return true;
+            }
         }
-
         return false;
     }
 
-    /**
-     * ───────────────────────────────────────────────
-     * SEARCH SHIFTS
-     * Filter by location name or user name
-     * ───────────────────────────────────────────────
-     */
-    public function searchShifts($locationName = null, $userName = null)
+   public function searchShifts($allShifts, $locationName = null, $userName = null)
     {
-        $shifts = Shift::with(['location', 'user'])->get();
         $results = [];
 
-        foreach ($shifts as $shift) {
-            if ($locationName && stripos($shift->location->name ?? '', $locationName) === false) continue;
-            if ($userName && stripos($shift->user->name ?? '', $userName) === false) continue;
-            $results[] = $shift;
+        foreach ($allShifts as $shift) {
+
+            $locationMatch = true;
+            $userMatch = true;
+
+            if ($locationName) {
+                $loc = strtolower($shift->location->name ?? '');
+                $locationMatch = str_contains($loc, strtolower($locationName));
+            }
+
+     
+            if ($userName) {
+                $usr = strtolower($shift->user->name ?? '');
+                $userMatch = str_contains($usr, strtolower($userName));
+            }
+
+            if ($locationMatch && $userMatch) {
+                $results[] = $shift;
+            }
         }
 
         return $results;
     }
 
-    /**
-     * ───────────────────────────────────────────────
-     * BULK OPEN SHIFT ASSIGNMENT USING HUNGARIAN
-     * Assigns all open shifts across all dates
-     * ───────────────────────────────────────────────
-     */
-    public function hungarianAssignAllOpenShifts(): array
+
+    public function hungarianAssignAllOpenShifts($openShifts, $users, $allShifts)
     {
-        // 1. Fetch all open shifts
-        $shifts = Shift::whereNull('user_id')
-            ->orderBy('date')
-            ->orderBy('from')
-            ->get();
+        $assigned = [];
 
-        if ($shifts->isEmpty()) return [];
+        $groups = $openShifts->groupBy('date');
 
-        // 2. Fetch all users
-        $users = User::where('id', '!=', 1)->get();
-        if ($users->isEmpty()) return [];
-
-        // 3. Assign shifts grouped by date
-        $assignedShifts = [];
-        $shiftsByDate = $shifts->groupBy('date');
-
-        foreach ($shiftsByDate as $date => $shiftsOnDate) {
-            $assignedShifts = array_merge($assignedShifts, $this->assignShiftsForDate($shiftsOnDate->values(), $users));
+        foreach ($groups as $date => $shiftsOnDate) {
+            $assigned = array_merge(
+                $assigned,
+                $this->assignShiftsForDate(
+                    $shiftsOnDate->values(),
+                    $users,
+                    $allShifts
+                )
+            );
         }
 
-        return $assignedShifts;
+        return $assigned;
     }
 
-    /**
-     * Assign shifts for a single date using Hungarian algorithm
-     */
-    private function assignShiftsForDate($shifts, $users): array
+    private function assignShiftsForDate($shifts, $users, $allShifts)
     {
-        $nShifts = $shifts->count();
-        $nUsers = $users->count();
-        $assignedShifts = [];
+        $countShifts = $shifts->count();
+        $countUsers  = $users->count();
 
-        // Build cost matrix
         $costMatrix = [];
+
         foreach ($shifts as $i => $shift) {
             $costMatrix[$i] = [];
+
             foreach ($users as $j => $user) {
-                $wl = $this->greedyWeeklyLimit($user->id, $shift->date, $shift->duration);
+                $userShifts = $allShifts->where('user_id', $user->id);
 
-                $overlap = Shift::where('user_id', $user->id)
+                $weekStart = Carbon::parse($shift->date)->startOfWeek();
+                $weekEnd   = Carbon::parse($shift->date)->endOfWeek();
+
+                $weeklyShifts = $userShifts
+                    ->whereBetween('date', [$weekStart, $weekEnd])
+                    ->where('id', '!=', $shift->id);
+
+                $weeklyCheck = $this->greedyWeeklyLimit(
+                    $user,
+                    $weeklyShifts,
+                    $shift->duration
+                );
+
+                $dayShifts = $userShifts
                     ->where('date', $shift->date)
-                    ->where('from', '<', $shift->to)
-                    ->where('to', '>', $shift->from)
-                    ->exists();
+                    ->where('id', '!=', $shift->id);
 
-                $costMatrix[$i][$j] = ($wl['exceeds'] || $overlap) ? 1000 : 1;
+                $overlap = $this->intervalOverlap(
+                    $dayShifts,
+                    $shift->from,
+                    $shift->to
+                );
+
+                $costMatrix[$i][$j] = ($weeklyCheck['exceeds'] || $overlap) ? 1000 : 1;
             }
         }
 
-        // Run Hungarian
-        $assignments = $this->hungarianAlgorithm($costMatrix);
+        $assignments = $this->hungarian($costMatrix);
 
-        // Save assignments
+        $result = [];
+
         foreach ($assignments as $shiftIndex => $userIndex) {
-            if ($userIndex === null || $costMatrix[$shiftIndex][$userIndex] >= 1000) continue;
+            if ($userIndex === null) continue;
+            if ($costMatrix[$shiftIndex][$userIndex] >= 1000) continue;
 
             $shift = $shifts[$shiftIndex];
-            $shift->user_id = $users[$userIndex]->id;
+            $user  = $users[$userIndex];
+
+            $shift->user_id = $user->id;
             $shift->status = 'published';
             $shift->save();
 
-            $assignedShifts[] = $shift;
+            $result[] = $shift;
         }
 
-        return $assignedShifts;
+        return $result;
     }
 
-    /**
-     * Simple greedy Hungarian placeholder
-     */
-    private function hungarianAlgorithm(array $matrix): array
+    private function hungarian(array $matrix)
     {
         $n = count($matrix);
         $m = count($matrix[0]);
-        $usedUsers = [];
-        $assignments = [];
+        $used = [];
+        $assign = [];
 
         for ($i = 0; $i < $n; $i++) {
-            $minCost = INF;
-            $bestUser = null;
+            $min = INF;
+            $best = null;
+
             for ($j = 0; $j < $m; $j++) {
-                if (in_array($j, $usedUsers)) continue;
-                if ($matrix[$i][$j] < $minCost) {
-                    $minCost = $matrix[$i][$j];
-                    $bestUser = $j;
+                if (in_array($j, $used)) continue;
+                if ($matrix[$i][$j] < $min) {
+                    $min = $matrix[$i][$j];
+                    $best = $j;
                 }
             }
-            $assignments[$i] = $bestUser;
-            if ($bestUser !== null) $usedUsers[] = $bestUser;
+
+            $assign[$i] = $best;
+            if ($best !== null) $used[] = $best;
         }
 
-        return $assignments;
+        return $assign;
     }
 }
