@@ -7,6 +7,7 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\ScheduleController;
 use App\Http\Controllers\CalendarController;
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\ReportController;
 
 Route::get('/', [LoginController::class, 'showLoginForm'])->name('login');
 Route::post('/login', [LoginController::class, 'login']);
@@ -34,4 +35,6 @@ Route::middleware('auth')->group(function () {
     Route::resource('roles', RoleController::class);
     Route::resource('locations', LocationController::class);
     Route::resource('users', UserController::class);
+
+    Route::get('/download-algorithm-report', [ReportController::class, 'downloadAlgorithmReport']);
 });
