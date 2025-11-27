@@ -93,7 +93,6 @@ class CalendarController extends Controller
 
         if ($request->user_id) {
             $user = User::find($request->user_id);
-
             $weekStart = Carbon::parse($request->date)->startOfWeek();
             $weekEnd = Carbon::parse($request->date)->endOfWeek();
 
@@ -103,9 +102,9 @@ class CalendarController extends Controller
                 ->get();
 
             $check = $this->algo->greedyWeeklyLimit(
-                user: $user,
-                existingShifts: $existingShifts,
-                newShiftDuration: $request->duration
+                $user,
+                $existingShifts,
+                $request->duration
             );
 
             if ($check['exceeds']) {
@@ -118,21 +117,33 @@ class CalendarController extends Controller
             }
         }
 
+        $userShifts = collect();
+        if ($request->user_id) {
+            $userShifts = Shift::where('user_id', $request->user_id)
+                ->where('date', $request->date)
+                ->where('id', '!=', $shiftId)
+                ->get();
+        }
+
         $locationShifts = Shift::where('location_id', $request->location_id)
             ->where('date', $request->date)
             ->where('id', '!=', $shiftId)
             ->get();
 
+        $shiftsToCheck = $userShifts->merge($locationShifts);
+
         $overlap = $this->algo->intervalOverlap(
-            existingShifts: $locationShifts,
-            from: $request->from,
-            to: $request->to
+            $shiftsToCheck,
+            $request->from,
+            $request->to,
+            $request->user_id,
+            $request->location_id
         );
 
         if ($overlap) {
             return response()->json([
                 'success' => false,
-                'message' => 'Shift time overlaps with another shift at this location'
+                'message' => 'Shift time overlaps with another shift for this user or location'
             ], 422);
         }
 
@@ -171,6 +182,7 @@ class CalendarController extends Controller
             ], 500);
         }
     }
+
 
     public function destroy(Shift $shift)
     {

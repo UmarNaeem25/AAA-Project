@@ -21,15 +21,18 @@ class ShiftAlgorithmsService
         ];
     }
 
-    public function intervalOverlap($existingShifts, $from, $to)
+    public function intervalOverlap($existingShifts, $from, $to, $userId = null, $locationId = null)
     {
         foreach ($existingShifts as $shift) {
-            if ($shift->from < $to && $from < $shift->to) {
-                return true;
+            if (($userId && $shift->user_id == $userId) || ($locationId && $shift->location_id == $locationId)) {
+                if ($shift->from < $to && $from < $shift->to) {
+                    return true;
+                }
             }
         }
         return false;
     }
+
 
     public function searchShifts($allShifts, $locationName = null, $userName = null)
     {
