@@ -216,109 +216,110 @@ class DatabaseSeeder extends Seeder
         DB::table('users')->insert($users);
         $this->command->info('Created ' . count($users) . ' users.');
 
-        // 4. Create Shifts - Only 100 total records with constraints
-        $this->command->info('Creating 100 shifts with constraints...');
+        // 4. Create Shifts - Only 100 total records with STRICT constraints
+        $this->command->info('Creating 100 shifts with strict constraints...');
         $shifts = [];
         $startDate = Carbon::now()->startOfWeek();
         
-        // Track assignments and open shifts per day per location
+        // Track assignments per day and shifts per location per day
         $assignedUsersPerDay = [];
-        $openShiftsPerDayLocation = [];
+        $shiftsPerDayLocation = []; // Track ALL shifts (open or assigned) per location per day
         
         $totalShiftsNeeded = 100;
         $shiftsCreated = 0;
         
-        // Generate shifts for 2 weeks to get approximately 100 shifts
-        for ($week = 0; $week < 2 && $shiftsCreated < $totalShiftsNeeded; $week++) {
+        // Generate shifts for 3 weeks to get exactly 100 shifts
+        for ($week = 0; $week < 3 && $shiftsCreated < $totalShiftsNeeded; $week++) {
             $weekStart = $startDate->copy()->addWeeks($week);
             
             for ($day = 0; $day < 7 && $shiftsCreated < $totalShiftsNeeded; $day++) {
                 $currentDate = $weekStart->copy()->addDays($day);
                 $dateString = $currentDate->format('Y-m-d');
                 
-                // Reset assigned users for this day
+                // Reset tracking for this day
                 $assignedUsersPerDay[$dateString] = [];
-                $openShiftsPerDayLocation[$dateString] = [];
+                $shiftsPerDayLocation[$dateString] = [];
                 
-                // Generate shifts for each location
-                for ($locationId = 1; $locationId <= count($locations) && $shiftsCreated < $totalShiftsNeeded; $locationId++) {
-                    // 1-2 shifts per location per day
-                    $shiftsPerLocation = rand(1, 2);
+                // Shuffle locations to randomize assignment
+                $locationsShuffled = range(1, count($locations));
+                shuffle($locationsShuffled);
+                
+                // Process each location (only ONE shift per location per day)
+                foreach ($locationsShuffled as $locationId) {
+                    if ($shiftsCreated >= $totalShiftsNeeded) break;
                     
-                    for ($i = 0; $i < $shiftsPerLocation && $shiftsCreated < $totalShiftsNeeded; $i++) {
-                        $roleId = rand(1, count($roles));
-                        
-                        // Random shift times
-                        $shiftType = rand(1, 3);
-                        switch($shiftType) {
-                            case 1: // Morning shift
-                                $from = Carbon::createFromTime(6, 0, 0)->addMinutes(rand(0, 120));
-                                $to = $from->copy()->addHours(rand(4, 6));
-                                break;
-                            case 2: // Afternoon shift
-                                $from = Carbon::createFromTime(12, 0, 0)->addMinutes(rand(0, 180));
-                                $to = $from->copy()->addHours(rand(4, 6));
-                                break;
-                            case 3: // Evening shift
-                                $from = Carbon::createFromTime(16, 0, 0)->addMinutes(rand(0, 120));
-                                $to = $from->copy()->addHours(rand(4, 6));
-                                break;
-                        }
-                        
-                        $duration = $from->diffInHours($to);
-                        $breakTime = rand(0, 1) ? 0.5 : 0;
-                        
-                        // Determine if this should be an assigned shift or open shift
-                        $userId = null;
-                        $status = 'open';
-                        
-                        // Check if we already have an open shift for this location today
-                        $hasOpenShiftForLocationToday = in_array($locationId, $openShiftsPerDayLocation[$dateString] ?? []);
-                        
-                        // Try to assign to a user if:
-                        // 1. We don't already have an open shift for this location today
-                        // 2. There are available users
-                        // 3. 60% chance
-                        if (!$hasOpenShiftForLocationToday && rand(1, 100) <= 60) {
-                            // Get available users for this day (not assigned yet today and not Admin)
-                            $availableUsers = [];
-                            for ($userIndex = 2; $userIndex <= count($users); $userIndex++) {
-                                if (!in_array($userIndex, $assignedUsersPerDay[$dateString])) {
-                                    $availableUsers[] = $userIndex;
-                                }
-                            }
-                            
-                            // If there are available users, assign one randomly
-                            if (!empty($availableUsers)) {
-                                $userId = $availableUsers[array_rand($availableUsers)];
-                                $assignedUsersPerDay[$dateString][] = $userId;
-                                $status = (rand(1, 3) === 1) ? 'accepted' : 'published';
-                            }
-                        }
-                        
-                        // If no user assigned, mark as open shift and track it
-                        if ($userId === null) {
-                            $status = 'open';
-                            // Track that this location has an open shift today
-                            $openShiftsPerDayLocation[$dateString][] = $locationId;
-                        }
-                        
-                        $shifts[] = [
-                            'location_id' => $locationId,
-                            'role_id' => $roleId,
-                            'user_id' => $userId,
-                            'date' => $dateString,
-                            'from' => $from->format('H:i:s'),
-                            'to' => $to->format('H:i:s'),
-                            'duration' => round($duration - $breakTime, 2),
-                            'break_time' => $breakTime,
-                            'status' => $status,
-                            'created_at' => now(),
-                            'updated_at' => now()
-                        ];
-                        
-                        $shiftsCreated++;
+                    // Check if this location already has a shift today
+                    if (in_array($locationId, $shiftsPerDayLocation[$dateString] ?? [])) {
+                        continue; // Skip - location already has a shift today
                     }
+                    
+                    $roleId = rand(1, count($roles));
+                    
+                    // Random shift times
+                    $shiftType = rand(1, 3);
+                    switch($shiftType) {
+                        case 1: // Morning shift
+                            $from = Carbon::createFromTime(6, 0, 0)->addMinutes(rand(0, 120));
+                            $to = $from->copy()->addHours(rand(4, 6));
+                            break;
+                        case 2: // Afternoon shift
+                            $from = Carbon::createFromTime(12, 0, 0)->addMinutes(rand(0, 180));
+                            $to = $from->copy()->addHours(rand(4, 6));
+                            break;
+                        case 3: // Evening shift
+                            $from = Carbon::createFromTime(16, 0, 0)->addMinutes(rand(0, 120));
+                            $to = $from->copy()->addHours(rand(4, 6));
+                            break;
+                    }
+                    
+                    $duration = $from->diffInHours($to);
+                    $breakTime = rand(0, 1) ? 0.5 : 0;
+                    
+                    // Determine if this should be an assigned shift or open shift
+                    $userId = null;
+                    $status = 'open';
+                    
+                    // 60% chance to assign to a user if available
+                    if (rand(1, 100) <= 60) {
+                        // Get available users for this day (not assigned yet today and not Admin)
+                        $availableUsers = [];
+                        for ($userIndex = 2; $userIndex <= count($users); $userIndex++) {
+                            if (!in_array($userIndex, $assignedUsersPerDay[$dateString])) {
+                                $availableUsers[] = $userIndex;
+                            }
+                        }
+                        
+                        // If there are available users, assign one randomly
+                        if (!empty($availableUsers)) {
+                            $userId = $availableUsers[array_rand($availableUsers)];
+                            $assignedUsersPerDay[$dateString][] = $userId;
+                            $status = (rand(1, 3) === 1) ? 'accepted' : 'published';
+                        }
+                    }
+                    
+                    // If no user assigned, it remains an open shift
+                    if ($userId === null) {
+                        $status = 'open';
+                    }
+                    
+                    // Create the shift
+                    $shifts[] = [
+                        'location_id' => $locationId,
+                        'role_id' => $roleId,
+                        'user_id' => $userId,
+                        'date' => $dateString,
+                        'from' => $from->format('H:i:s'),
+                        'to' => $to->format('H:i:s'),
+                        'duration' => round($duration - $breakTime, 2),
+                        'break_time' => $breakTime,
+                        'status' => $status,
+                        'created_at' => now(),
+                        'updated_at' => now()
+                    ];
+                    
+                    // Track that this location now has a shift today
+                    $shiftsPerDayLocation[$dateString][] = $locationId;
+                    $shiftsCreated++;
                 }
             }
         }
@@ -348,19 +349,17 @@ class DatabaseSeeder extends Seeder
             }
         }
         
-        // Verify no same-location open shifts on same day
-        $openShiftsPerDayLocationCheck = [];
+        // Verify no same-location shifts on same day (for ANY shift type)
+        $shiftsPerDayLocationCheck = [];
         $violationsLocation = 0;
         
         foreach ($shifts as $shift) {
-            if ($shift['user_id'] === null) {
-                $key = $shift['date'] . '_' . $shift['location_id'];
-                if (!isset($openShiftsPerDayLocationCheck[$key])) {
-                    $openShiftsPerDayLocationCheck[$key] = 1;
-                } else {
-                    $openShiftsPerDayLocationCheck[$key]++;
-                    $violationsLocation++;
-                }
+            $key = $shift['date'] . '_' . $shift['location_id'];
+            if (!isset($shiftsPerDayLocationCheck[$key])) {
+                $shiftsPerDayLocationCheck[$key] = 1;
+            } else {
+                $shiftsPerDayLocationCheck[$key]++;
+                $violationsLocation++;
             }
         }
         
@@ -375,15 +374,18 @@ class DatabaseSeeder extends Seeder
         $this->command->info('Assigned shifts: ' . $assignedShifts . ' (' . round(($assignedShifts/$totalShifts)*100, 1) . '%)');
         $this->command->info('Shifts assigned to Admin: ' . $adminShifts . ' (should be 0)');
         $this->command->info('User constraint violations (>1 shift/day): ' . $violationsUser . ' (should be 0)');
-        $this->command->info('Location constraint violations (>1 open shift/location/day): ' . $violationsLocation . ' (should be 0)');
+        $this->command->info('Location constraint violations (>1 shift/location/day): ' . $violationsLocation . ' (should be 0)');
         $this->command->info('==========================================');
         $this->command->info('Perfect for testing Hungarian Algorithm!');
         $this->command->info($openShifts . ' open shifts available for assignment.');
+        $this->command->info('STRICT: Only ONE shift (open or assigned) per location per day.');
         $this->command->info('Admin login: admin@example.com / 12345678');
         $this->command->info('==========================================');
         
         if ($violationsUser > 0 || $violationsLocation > 0) {
             $this->command->error('WARNING: Some constraints were violated!');
+        } else {
+            $this->command->info('SUCCESS: All constraints satisfied!');
         }
     }
 }

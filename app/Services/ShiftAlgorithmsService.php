@@ -9,15 +9,11 @@ class ShiftAlgorithmsService
     public function greedyWeeklyLimit($user, $existingShifts, $newShiftDuration)
     {
         $total = 0;
-
         foreach ($existingShifts as $shift) {
             $total += $shift->duration;
         }
-
         $total += $newShiftDuration;
-
         $allowed = $user->weekly_hours_limit ?? 0;
-
         return [
             'allowed'  => $allowed,
             'required' => $total,
@@ -35,41 +31,31 @@ class ShiftAlgorithmsService
         return false;
     }
 
-   public function searchShifts($allShifts, $locationName = null, $userName = null)
+    public function searchShifts($allShifts, $locationName = null, $userName = null)
     {
         $results = [];
-
         foreach ($allShifts as $shift) {
-
             $locationMatch = true;
             $userMatch = true;
-
             if ($locationName) {
                 $loc = strtolower($shift->location->name ?? '');
                 $locationMatch = str_contains($loc, strtolower($locationName));
             }
-
-     
             if ($userName) {
                 $usr = strtolower($shift->user->name ?? '');
                 $userMatch = str_contains($usr, strtolower($userName));
             }
-
             if ($locationMatch && $userMatch) {
                 $results[] = $shift;
             }
         }
-
         return $results;
     }
-
 
     public function hungarianAssignAllOpenShifts($openShifts, $users, $allShifts)
     {
         $assigned = [];
-
         $groups = $openShifts->groupBy('date');
-
         foreach ($groups as $date => $shiftsOnDate) {
             $assigned = array_merge(
                 $assigned,
@@ -80,7 +66,6 @@ class ShiftAlgorithmsService
                 )
             );
         }
-
         return $assigned;
     }
 
@@ -88,15 +73,12 @@ class ShiftAlgorithmsService
     {
         $countShifts = $shifts->count();
         $countUsers  = $users->count();
-
         $costMatrix = [];
 
         foreach ($shifts as $i => $shift) {
             $costMatrix[$i] = [];
-
             foreach ($users as $j => $user) {
                 $userShifts = $allShifts->where('user_id', $user->id);
-
                 $weekStart = Carbon::parse($shift->date)->startOfWeek();
                 $weekEnd   = Carbon::parse($shift->date)->endOfWeek();
 
@@ -114,31 +96,29 @@ class ShiftAlgorithmsService
                     ->where('date', $shift->date)
                     ->where('id', '!=', $shift->id);
 
+                $hasAnyShiftSameDate = $dayShifts->isNotEmpty();
+
                 $overlap = $this->intervalOverlap(
                     $dayShifts,
                     $shift->from,
                     $shift->to
                 );
 
-                $costMatrix[$i][$j] = ($weeklyCheck['exceeds'] || $overlap) ? 1000 : 1;
+                $costMatrix[$i][$j] = ($weeklyCheck['exceeds'] || $hasAnyShiftSameDate || $overlap) ? 1000 : 1;
             }
         }
 
         $assignments = $this->hungarian($costMatrix);
-
         $result = [];
 
         foreach ($assignments as $shiftIndex => $userIndex) {
             if ($userIndex === null) continue;
             if ($costMatrix[$shiftIndex][$userIndex] >= 1000) continue;
-
             $shift = $shifts[$shiftIndex];
             $user  = $users[$userIndex];
-
             $shift->user_id = $user->id;
             $shift->status = 'published';
             $shift->save();
-
             $result[] = $shift;
         }
 
@@ -151,11 +131,9 @@ class ShiftAlgorithmsService
         $m = count($matrix[0]);
         $used = [];
         $assign = [];
-
         for ($i = 0; $i < $n; $i++) {
             $min = INF;
             $best = null;
-
             for ($j = 0; $j < $m; $j++) {
                 if (in_array($j, $used)) continue;
                 if ($matrix[$i][$j] < $min) {
@@ -163,11 +141,9 @@ class ShiftAlgorithmsService
                     $best = $j;
                 }
             }
-
             $assign[$i] = $best;
             if ($best !== null) $used[] = $best;
         }
-
         return $assign;
     }
 }
